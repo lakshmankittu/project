@@ -1,137 +1,307 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, inject, input, output, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, NgZone, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DialogModule } from '@syncfusion/ej2-angular-popups';
-import { MediaDevicesService } from './media-devices.service';
-import { DeviceKind, LABELS, Label, UI, type DeviceSelection } from './model';
+import { FormsModule } from '@angular/forms';
 
 @Component({
   selector: 'app-device-checker-dialog',
   standalone: true,
-  imports: [CommonModule, DialogModule],
+  imports: [CommonModule, DialogModule, FormsModule],
   templateUrl: './device-checker-dialog.component.html',
   styleUrl: './device-checker-dialog.component.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class DeviceCheckerDialogComponent {
-  readonly media = inject(MediaDevicesService);
-  private readonly destroyRef = inject(DestroyRef);
+export class DeviceCheckerDialogComponent implements OnInit, OnDestroy {
+  // Tab management
+  activeTab: 'audio' | 'video' = 'audio';
 
-  // 2-way bindable visibility for the ejs-dialog
-  readonly visible = input<boolean>(false);
-  readonly visibleChange = output<boolean>();
+  // Device lists
+  availableDevices: MediaDeviceInfo[] = [];
+  defaultMicId: string = '';
+  communicationsMicId: string = '';
+  defaultSpeakerId: string = '';
+  communicationsSpeakerId: string = '';
 
-  // Emit currently chosen devices to parent on save
-  readonly settingsChange = output<DeviceSelection>();
+  // Microphone test
+  selectedMicId: string = '';
+  isRecording: boolean = false;
+  audioLevel: number = 0;
+  recordingDuration: number = 0;
+  recordedAudioUrl: string | null = null;
+  maxRecordingTime: number = 10;
 
-  // UI text enums/constants exposed to template
-  readonly L = Label;
-  readonly T = LABELS;
-  readonly UI = UI;
+  // Speaker test
+  selectedSpeakerId: string = '';
+  isPlayingTestSound: boolean = false;
+  @ViewChild('speakerAudio') speakerAudioRef?: ElementRef<HTMLAudioElement>;
+  @ViewChild('recordedAudio') recordedAudioRef?: ElementRef<HTMLAudioElement>;
 
-  // Selected devices
-  readonly selection = signal<DeviceSelection>({ audioInputId: null, audioOutputId: null, videoInputId: null });
+  // Private properties
+  private stream: MediaStream | null = null;
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private animationFrameId: number | null = null;
+  private recordingTimer: any = null;
+  private recordedChunks: Blob[] = [];
+  private testAudio: HTMLAudioElement | null = null;
 
-  // Device lists (computed from service)
-  readonly audioInputs = computed(() => this.media.devices().audioInputs);
-  readonly audioOutputs = computed(() => this.media.devices().audioOutputs);
-  readonly videoInputs = computed(() => this.media.devices().videoInputs);
+  constructor(private cdr: ChangeDetectorRef, private ngZone: NgZone) {}
 
-  // live meters/state
-  readonly micLevel = computed(() => this.media.micLevel());
-  readonly isMicTesting = computed(() => this.media.isMicTesting());
-  readonly isVideoOn = computed(() => this.media.isVideoOn());
-  readonly outputSelectionSupported = computed(() => this.media.outputSelectionSupported());
-  readonly error = computed(() => this.media.error());
-  readonly isSecureContext = computed(() => this.media.isSecureContext());
+  ngOnInit() { this.listDevices(); }
+  ngOnDestroy() { this.cleanup(); }
 
-  @ViewChild('videoRef', { static: false }) videoRef?: ElementRef<HTMLVideoElement>;
-  @ViewChild('testAudioRef', { static: false }) testAudioRef?: ElementRef<HTMLAudioElement>;
+  async listDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      stream.getTracks().forEach(track => track.stop());
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      this.availableDevices = devices;
 
-  constructor() {
-    // Cleanup on destroy
-    this.destroyRef.onDestroy(() => this.media.cleanupAll(this.videoRef?.nativeElement));
+      // Find default microphone
+      const defaultDevice = devices.find(d => d.kind === 'audioinput' && d.deviceId === 'default');
+      const communicationsDevice = devices.find(d => d.kind === 'audioinput' && d.deviceId === 'communications');
+      if (defaultDevice?.groupId) {
+        const actualDevice = devices.find(d => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications' && d.groupId === defaultDevice.groupId);
+        if (actualDevice) {
+          this.defaultMicId = actualDevice.deviceId;
+          // Auto-select default microphone if none selected
+          if (!this.selectedMicId) {
+            this.selectedMicId = actualDevice.deviceId;
+          }
+        }
+      }
+      if (communicationsDevice?.groupId) {
+        const actualDevice = devices.find(d => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications' && d.groupId === communicationsDevice.groupId);
+        if (actualDevice) this.communicationsMicId = actualDevice.deviceId;
+      }
+
+      // Find default speaker
+      const defaultSpeaker = devices.find(d => d.kind === 'audiooutput' && d.deviceId === 'default');
+      const communicationsSpeaker = devices.find(d => d.kind === 'audiooutput' && d.deviceId === 'communications');
+      if (defaultSpeaker?.groupId) {
+        const actualDevice = devices.find(d => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications' && d.groupId === defaultSpeaker.groupId);
+        if (actualDevice) {
+          this.defaultSpeakerId = actualDevice.deviceId;
+          // Auto-select default speaker if none selected
+          if (!this.selectedSpeakerId) {
+            this.selectedSpeakerId = actualDevice.deviceId;
+          }
+        }
+      }
+      if (communicationsSpeaker?.groupId) {
+        const actualDevice = devices.find(d => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications' && d.groupId === communicationsSpeaker.groupId);
+        if (actualDevice) this.communicationsSpeakerId = actualDevice.deviceId;
+      }
+
+      this.cdr.detectChanges();
+    } catch (err) { console.error('Error:', err); }
   }
 
-  async onDialogOpen(): Promise<void> {
-    console.log('[DeviceCheckerDialog] Dialog opened');
+  getAudioInputs(): MediaDeviceInfo[] {
+    return this.availableDevices.filter(d => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  }
+  getAudioOutputs(): MediaDeviceInfo[] {
+    return this.availableDevices.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  }
+  getVideoInputs(): MediaDeviceInfo[] { return this.availableDevices.filter(d => d.kind === 'videoinput'); }
+  isDefaultMic(deviceId: string): boolean { return this.defaultMicId === deviceId; }
+  isCommunicationsMic(deviceId: string): boolean { return this.communicationsMicId === deviceId; }
+  isDefaultSpeaker(deviceId: string): boolean { return this.defaultSpeakerId === deviceId; }
+  isCommunicationsSpeaker(deviceId: string): boolean { return this.communicationsSpeakerId === deviceId; }
+  getSelectedDeviceName(): string {
+    if (!this.selectedMicId) return 'No device selected';
+    const device = this.availableDevices.find(d => d.deviceId === this.selectedMicId);
+    return device ? (device.label || 'Unnamed Device') : 'Unknown Device';
+  }
+  getFormattedRecordingTime(): string { return this.recordingDuration.toFixed(1) + 's'; }
+  get recordingProgress(): number { return (this.recordingDuration / this.maxRecordingTime) * 100; }
 
-    // First, check permission status without requesting
-    await this.media.checkPermissions();
+  async startRecording() {
+    if (!this.selectedMicId || this.isRecording) return;
+    try {
+      this.clearRecording();
+      this.recordingDuration = 0;
+      this.recordedChunks = [];
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: this.selectedMicId } } });
+      this.audioContext = new AudioContext();
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      const source = this.audioContext.createMediaStreamSource(this.stream);
+      source.connect(this.analyser);
+      this.mediaRecorder = new MediaRecorder(this.stream);
+      this.mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) this.recordedChunks.push(event.data); };
+      this.mediaRecorder.onstop = () => {
+        this.ngZone.run(async () => {
+          const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+          this.recordedAudioUrl = URL.createObjectURL(blob);
+          this.cdr.detectChanges();
 
-    // Try to enumerate devices (may not have labels yet)
-    await this.media.refreshDevices();
+          // Wait for the audio element to be created, then set its output device
+          setTimeout(async () => {
+            if (this.recordedAudioRef?.nativeElement && this.selectedSpeakerId) {
+              const audio = this.recordedAudioRef.nativeElement;
+              if ('setSinkId' in audio) {
+                try {
+                  await (audio as any).setSinkId(this.selectedSpeakerId);
+                  console.log('Recorded audio output set to:', this.selectedSpeakerId);
+                } catch (err) {
+                  console.error('Error setting recorded audio output:', err);
+                }
+              }
+            }
+          }, 100);
+        });
+      };
+      this.mediaRecorder.start();
+      this.isRecording = true;
+      this.updateAudioLevel();
+      this.recordingTimer = setInterval(() => {
+        this.recordingDuration += 0.1;
+        if (this.recordingDuration >= this.maxRecordingTime) this.stopRecording();
+      }, 100);
+    } catch (err) { console.error('Error:', err); this.cleanup(); }
+  }
 
-    // Request permissions - this is required to get device labels
-    console.log('[DeviceCheckerDialog] Requesting permissions...');
-    const granted = await this.media.ensurePermissions({ audio: true, video: true });
+  stopRecording() {
+    if (!this.isRecording) return;
+    this.isRecording = false;
+    if (this.recordingTimer) { clearInterval(this.recordingTimer); this.recordingTimer = null; }
+    if (this.animationFrameId !== null) { cancelAnimationFrame(this.animationFrameId); this.animationFrameId = null; }
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop();
+    if (this.stream) { this.stream.getTracks().forEach(track => track.stop()); this.stream = null; }
+    if (this.audioContext) { this.audioContext.close(); this.audioContext = null; }
+    this.analyser = null;
+    this.audioLevel = 0;
+  }
 
-    if (granted) {
-      console.log('[DeviceCheckerDialog] Permissions granted, refreshing devices...');
-      // Now enumerate devices again - they should have labels after permission is granted
-      await this.media.refreshDevices();
-    } else {
-      console.warn('[DeviceCheckerDialog] Permissions not granted');
+  clearRecording() {
+    if (this.recordedAudioUrl) { URL.revokeObjectURL(this.recordedAudioUrl); this.recordedAudioUrl = null; }
+    this.recordedChunks = [];
+    this.recordingDuration = 0;
+  }
+
+  private updateAudioLevel() {
+    if (!this.analyser || !this.isRecording) return;
+    const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(dataArray);
+    const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+    this.audioLevel = Math.min(100, (average / 255) * 100);
+    this.animationFrameId = requestAnimationFrame(() => this.updateAudioLevel());
+  }
+
+  // Tab navigation
+  switchTab(tab: 'audio' | 'video') {
+    this.activeTab = tab;
+    this.stopRecording();
+  }
+
+  nextTab() {
+    if (this.activeTab === 'audio') {
+      this.activeTab = 'video';
+      this.stopRecording();
     }
-
-    console.log('[DeviceCheckerDialog] Initialization complete');
-    console.log('[DeviceCheckerDialog] Devices found:', {
-      audioInputs: this.audioInputs().length,
-      audioOutputs: this.audioOutputs().length,
-      videoInputs: this.videoInputs().length
-    });
   }
 
-  async onDialogClose(): Promise<void> {
-    await this.media.cleanupAll(this.videoRef?.nativeElement);
-    this.visibleChange.emit(false);
+  previousTab() {
+    if (this.activeTab === 'video') {
+      this.activeTab = 'audio';
+    }
   }
 
-  // Mic
-  async startMic(): Promise<void> {
-    await this.media.startMicTest(this.selection().audioInputId ?? null);
-  }
-  stopMic(): void {
-    this.media.stopMicTest();
-  }
-
-  // Video
-  async startVideo(): Promise<void> {
-    const video = this.videoRef?.nativeElement;
-    if (!video) return;
-    await this.media.startVideo(video, this.selection().videoInputId ?? null);
-  }
-  stopVideo(): void {
-    const video = this.videoRef?.nativeElement;
-    this.media.stopVideo(video);
+  // Speaker test methods
+  getSelectedSpeakerName(): string {
+    if (!this.selectedSpeakerId) return 'No speaker selected';
+    const device = this.availableDevices.find(d => d.deviceId === this.selectedSpeakerId);
+    return device ? (device.label || 'Unnamed Device') : 'Unknown Device';
   }
 
-  // Speaker
-  async testSpeaker(): Promise<void> {
-    const audio = this.testAudioRef?.nativeElement;
-    if (!audio) return;
-    await this.media.playTestTone(audio, this.selection().audioOutputId ?? null);
+  onMicrophoneChange() {
+    // If currently recording, stop and restart with new microphone
+    if (this.isRecording) {
+      this.stopRecording();
+      console.log('Microphone changed to:', this.selectedMicId);
+      // Optionally auto-restart recording with new mic
+      // setTimeout(() => this.startRecording(), 100);
+    }
   }
 
-  // Selection change handlers
-  onAudioInputChange(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
-    this.selection.update(s => ({ ...s, audioInputId: value || null }));
+  async onSpeakerChange() {
+    // Update all audio elements' output device when speaker selection changes
+    if (!this.selectedSpeakerId) return;
+
+    const audioElements = [
+      this.speakerAudioRef?.nativeElement,
+      this.recordedAudioRef?.nativeElement
+    ].filter(el => el !== undefined);
+
+    for (const audio of audioElements) {
+      if (audio && 'setSinkId' in audio) {
+        try {
+          await (audio as any).setSinkId(this.selectedSpeakerId);
+          console.log('Audio output device changed to:', this.selectedSpeakerId);
+        } catch (err) {
+          console.error('Error setting audio output device:', err);
+        }
+      }
+    }
   }
 
-  onVideoInputChange(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
-    this.selection.update(s => ({ ...s, videoInputId: value || null }));
+  async playTestSound() {
+    if (!this.selectedSpeakerId || this.isPlayingTestSound) return;
+
+    this.isPlayingTestSound = true;
+
+    try {
+      // Create a simple test tone using Web Audio API
+      const audioContext = new AudioContext();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      const destination = audioContext.createMediaStreamDestination();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(destination);
+
+      oscillator.frequency.value = 440; // A4 note
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 2);
+
+      // Create audio element and set the output device
+      const audio = new Audio();
+      audio.srcObject = destination.stream;
+
+      // Set the audio output device (setSinkId)
+      if ('setSinkId' in audio) {
+        await (audio as any).setSinkId(this.selectedSpeakerId);
+      }
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 2);
+
+      await audio.play();
+
+      setTimeout(() => {
+        this.isPlayingTestSound = false;
+        audio.pause();
+        audio.srcObject = null;
+        audioContext.close();
+        this.cdr.detectChanges();
+      }, 2000);
+    } catch (err) {
+      console.error('Error playing test sound:', err);
+      this.isPlayingTestSound = false;
+      this.cdr.detectChanges();
+    }
   }
 
-  onAudioOutputChange(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
-    this.selection.update(s => ({ ...s, audioOutputId: value || null }));
-  }
-
-  // Save & Close
-  saveAndClose(): void {
-    this.settingsChange.emit(this.selection());
-    this.visibleChange.emit(false);
+  private cleanup() {
+    this.stopRecording();
+    this.clearRecording();
+    if (this.testAudio) {
+      this.testAudio.pause();
+      this.testAudio = null;
+    }
   }
 }
-

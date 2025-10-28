@@ -1,90 +1,144 @@
-<ejs-dialog
-  [visible]="visible()"
-  [isModal]="true"
-  [showCloseIcon]="true"
-  [allowDragging]="true"
-  [width]="UI.DIALOG_WIDTH"
-  [header]="T[L.DialogTitle]"
-  (open)="onDialogOpen()"
-  (close)="onDialogClose()"
->
-  <div class="error-message" *ngIf="error()" style="padding: 10px; margin-bottom: 10px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;">
-    {{ error() }}
-  </div>
+<div class="device-checker-container">
+  <!-- Stepper Navigation -->
+  <div class="stepper-container">
+    <div class="stepper">
+      <!-- Step 1: Audio Test -->
+      <div class="step" [class.active]="activeTab === 'audio'" [class.completed]="activeTab === 'video'">
+        <div class="step-circle" (click)="switchTab('audio')">
+          <span class="step-number">1</span>
+          <span class="step-checkmark" *ngIf="activeTab === 'video'">✓</span>
+        </div>
+        <div class="step-label">Audio Test</div>
+      </div>
 
-  <div class="debug-info" style="padding: 10px; margin-bottom: 10px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
-    <strong>Device Status:</strong><br>
-    🎤 Microphones: {{ audioInputs().length }} |
-    🔊 Speakers: {{ audioOutputs().length }} |
-    📷 Cameras: {{ videoInputs().length }}<br>
+      <!-- Connector Line -->
+      <div class="step-connector" [class.completed]="activeTab === 'video'"></div>
 
-    <div *ngIf="media.permissionStatus()" style="margin-top: 8px;">
-      <strong>Permissions:</strong>
-      Microphone: {{ media.permissionStatus()?.microphone || 'unknown' }} |
-      Camera: {{ media.permissionStatus()?.camera || 'unknown' }}
-    </div>
-
-    <div style="margin-top: 8px;">
-      <strong>Secure Context:</strong> {{ media.isSecureContext() ? '✅ Yes (HTTPS/localhost)' : '❌ No - HTTPS required!' }}
-    </div>
-
-    <button type="button" (click)="onDialogOpen()" style="margin-top: 8px; padding: 6px 12px; cursor: pointer;">
-      🔄 Request Permissions & Refresh Devices
-    </button>
-  </div>
-
-  <div class="section">
-    <div class="row">
-      <label for="micSelect">{{ T[L.Microphone] }}</label>
-      <select id="micSelect" [value]="selection().audioInputId ?? ''" (change)="onAudioInputChange($event)">
-        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
-        <option *ngFor="let d of audioInputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
-      </select>
-      <div class="actions">
-        <button type="button" (click)="startMic()">{{ T[L.Start] }}</button>
-        <button type="button" (click)="stopMic()" [disabled]="!isMicTesting()">{{ T[L.Stop] }}</button>
+      <!-- Step 2: Video Test -->
+      <div class="step" [class.active]="activeTab === 'video'">
+        <div class="step-circle" (click)="switchTab('video')">
+          <span class="step-number">2</span>
+        </div>
+        <div class="step-label">Video Test</div>
       </div>
     </div>
-    <div class="row meter">
-      <div class="bar"><div class="fill" [style.width.%]="micLevel() * 100"></div></div>
-    </div>
   </div>
 
-  <div class="section">
-    <div class="row">
-      <label for="camSelect">{{ T[L.Camera] }}</label>
-      <select id="camSelect" [value]="selection().videoInputId ?? ''" (change)="onVideoInputChange($event)">
-        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
-        <option *ngFor="let d of videoInputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
-      </select>
-      <div class="actions">
-        <button type="button" (click)="startVideo()">{{ T[L.Start] }}</button>
-        <button type="button" (click)="stopVideo()" [disabled]="!isVideoOn()">{{ T[L.Stop] }}</button>
+  <!-- Audio Test Tab -->
+  <div class="tab-content" *ngIf="activeTab === 'audio'">
+    <!-- Unified Audio Device Selection -->
+    <div class="unified-audio-panel">
+      <div class="device-selection-row">
+        <div class="device-select-group">
+          <label class="form-label">Microphone</label>
+          <select [(ngModel)]="selectedMicId" (ngModelChange)="onMicrophoneChange()" class="form-select">
+            <option value="">-- Choose a microphone --</option>
+            <option *ngFor="let device of getAudioInputs()" [value]="device.deviceId">
+              {{ device.label || 'Unnamed Device' }}
+              <ng-container *ngIf="isDefaultMic(device.deviceId)"> [DEFAULT]</ng-container>
+              <ng-container *ngIf="isCommunicationsMic(device.deviceId) && !isDefaultMic(device.deviceId)"> [COMM]</ng-container>
+            </option>
+          </select>
+        </div>
+
+        <div class="device-select-group">
+          <label class="form-label">Speaker</label>
+          <select [(ngModel)]="selectedSpeakerId" (ngModelChange)="onSpeakerChange()" class="form-select">
+            <option value="">-- Choose a speaker --</option>
+            <option *ngFor="let device of getAudioOutputs()" [value]="device.deviceId">
+              {{ device.label || 'Unnamed Device' }}
+              <ng-container *ngIf="isDefaultSpeaker(device.deviceId)"> [DEFAULT]</ng-container>
+              <ng-container *ngIf="isCommunicationsSpeaker(device.deviceId) && !isDefaultSpeaker(device.deviceId)"> [COMM]</ng-container>
+            </option>
+          </select>
+        </div>
+            <div class="test-card">
+          <div class="card-body">
+            <div class="controls">
+              <button
+                *ngIf="!isRecording"
+                (click)="startRecording()"
+                [disabled]="!selectedMicId"
+                class="btn btn-record btn-large">
+                Test
+              </button>
+              <button
+                *ngIf="isRecording"
+                (click)="stopRecording()"
+                class="btn btn-stop btn-large">
+                Stop
+              </button>
+            </div>
+
+            <div *ngIf="isRecording" class="recording-status">
+              <div class="status-header">
+                <span class="recording-indicator">Recording...</span>
+                <span class="recording-time">{{ getFormattedRecordingTime() }} / {{ maxRecordingTime }}s</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" [style.width.%]="recordingProgress"></div>
+              </div>
+              <div class="audio-level">
+                <label class="level-label">Audio Level</label>
+                <div class="level-meter">
+                  <div class="level-fill" [style.width.%]="audioLevel"></div>
+                  <span class="level-value">{{ audioLevel.toFixed(0) }}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div *ngIf="recordedAudioUrl" class="playback-section">
+              <div class="playback-header">
+                <span class="playback-title">Recorded Audio</span>
+                <span class="playback-info">{{ recordingDuration.toFixed(1) }}s</span>
+              </div>
+              <audio #recordedAudio [src]="recordedAudioUrl" controls class="audio-player"></audio>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Test Controls Section -->
+      <div class="test-controls-grid">
+        <!-- Microphone Test Card -->
+    
       </div>
     </div>
-    <div class="row preview">
-      <video #videoRef muted playsinline></video>
+
+    <!-- Navigation Footer -->
+    <div class="tab-footer">
+      <button (click)="listDevices()" class="btn btn-secondary">
+        <span class="btn-icon">&#128260;</span> Refresh Devices
+      </button>
+      <button (click)="nextTab()" class="btn btn-primary">
+        Next: Video Test <span class="btn-icon">&#8594;</span>
+      </button>
     </div>
   </div>
 
-  <div class="section">
-    <div class="row">
-      <label for="spkSelect">{{ T[L.Speaker] }}</label>
-      <select id="spkSelect" [value]="selection().audioOutputId ?? ''" (change)="onAudioOutputChange($event)">
-        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
-        <option *ngFor="let d of audioOutputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
-      </select>
-      <div class="actions">
-        <button type="button" (click)="testSpeaker()">{{ T[L.TestSpeaker] }}</button>
+  <!-- Video Test Tab -->
+  <div class="tab-content" *ngIf="activeTab === 'video'">
+    <div class="video-test-placeholder">
+      <div class="placeholder-icon">&#128249;</div>
+      <h2 class="placeholder-title">Video Test</h2>
+      <p class="placeholder-text">Video testing functionality will be implemented here</p>
+      <div class="placeholder-features">
+        <div class="feature-item">&#10003; Camera selection</div>
+        <div class="feature-item">&#10003; Live preview</div>
+        <div class="feature-item">&#10003; Resolution testing</div>
+        <div class="feature-item">&#10003; Frame rate testing</div>
       </div>
     </div>
-    <p class="note" *ngIf="!outputSelectionSupported()">{{ T[L.OutputSwitchUnsupported] }}</p>
-    <audio #testAudioRef></audio>
-  </div>
 
-  <div class="footer">
-    <button type="button" class="primary" (click)="saveAndClose()">{{ T[L.Save] }}</button>
-    <button type="button" (click)="onDialogClose()">{{ T[L.Close] }}</button>
+    <!-- Navigation Footer -->
+    <div class="tab-footer">
+      <button (click)="previousTab()" class="btn btn-secondary">
+        <span class="btn-icon">&#8592;</span> Back: Audio Test
+      </button>
+      <button class="btn btn-primary" disabled>
+        Finish <span class="btn-icon">&#10003;</span>
+      </button>
+    </div>
   </div>
-</ejs-dialog>
+</div>
 
