@@ -8,16 +8,29 @@
   (open)="onDialogOpen()"
   (close)="onDialogClose()"
 >
-  <div class="error-message" *ngIf="error()" style="color: red; padding: 10px; margin-bottom: 10px; background: #fee; border-radius: 4px;">
+  <div class="error-message" *ngIf="error()" style="padding: 10px; margin-bottom: 10px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;">
     {{ error() }}
   </div>
 
   <div class="debug-info" style="padding: 10px; margin-bottom: 10px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
-    <strong>Debug Info:</strong><br>
-    Audio Inputs: {{ audioInputs().length }} |
-    Audio Outputs: {{ audioOutputs().length }} |
-    Video Inputs: {{ videoInputs().length }}<br>
-    <button type="button" (click)="onDialogOpen()" style="margin-top: 8px; padding: 4px 12px;">🔄 Request Permissions & Refresh Devices</button>
+    <strong>Device Status:</strong><br>
+    🎤 Microphones: {{ audioInputs().length }} |
+    🔊 Speakers: {{ audioOutputs().length }} |
+    📷 Cameras: {{ videoInputs().length }}<br>
+
+    <div *ngIf="media.permissionStatus()" style="margin-top: 8px;">
+      <strong>Permissions:</strong>
+      Microphone: {{ media.permissionStatus()?.microphone || 'unknown' }} |
+      Camera: {{ media.permissionStatus()?.camera || 'unknown' }}
+    </div>
+
+    <div style="margin-top: 8px;">
+      <strong>Secure Context:</strong> {{ media.isSecureContext() ? '✅ Yes (HTTPS/localhost)' : '❌ No - HTTPS required!' }}
+    </div>
+
+    <button type="button" (click)="onDialogOpen()" style="margin-top: 8px; padding: 6px 12px; cursor: pointer;">
+      🔄 Request Permissions & Refresh Devices
+    </button>
   </div>
 
   <div class="section">

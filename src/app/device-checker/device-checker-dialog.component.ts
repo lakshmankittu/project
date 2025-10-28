@@ -52,14 +52,25 @@ export class DeviceCheckerDialogComponent {
   }
 
   async onDialogOpen(): Promise<void> {
-    console.log('[DeviceCheckerDialog] Dialog opened, requesting permissions...');
+    console.log('[DeviceCheckerDialog] Dialog opened');
 
-    // Request permissions first - this is required to get device labels
-    await this.media.ensurePermissions({ audio: true, video: true });
+    // First, check permission status without requesting
+    await this.media.checkPermissions();
 
-    console.log('[DeviceCheckerDialog] Refreshing devices...');
-    // Now enumerate devices - they should have labels after permission is granted
+    // Try to enumerate devices (may not have labels yet)
     await this.media.refreshDevices();
+
+    // Request permissions - this is required to get device labels
+    console.log('[DeviceCheckerDialog] Requesting permissions...');
+    const granted = await this.media.ensurePermissions({ audio: true, video: true });
+
+    if (granted) {
+      console.log('[DeviceCheckerDialog] Permissions granted, refreshing devices...');
+      // Now enumerate devices again - they should have labels after permission is granted
+      await this.media.refreshDevices();
+    } else {
+      console.warn('[DeviceCheckerDialog] Permissions not granted');
+    }
 
     console.log('[DeviceCheckerDialog] Initialization complete');
     console.log('[DeviceCheckerDialog] Devices found:', {

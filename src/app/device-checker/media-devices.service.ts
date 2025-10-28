@@ -1,7 +1,13 @@
+
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { PLATFORM_ID } from '@angular/core';
 import { ANALYSER, DeviceKind, LABELS, Label, TEST_TONE, type AvDevices } from './model';
+
+export interface PermissionStatus {
+  microphone: PermissionState;
+  camera: PermissionState;
+}
 
 @Injectable({ providedIn: 'root' })
 export class MediaDevicesService {
@@ -16,6 +22,8 @@ export class MediaDevicesService {
   readonly isVideoOn = signal(false);
   readonly error = signal<string | null>(null);
   readonly outputSelectionSupported = signal<boolean>(false);
+  readonly permissionStatus = signal<PermissionStatus | null>(null);
+  readonly isSecureContext = signal<boolean>(false);
 
   private micStream?: MediaStream;
   private videoStream?: MediaStream;
@@ -23,18 +31,87 @@ export class MediaDevicesService {
   private analyser?: AnalyserNode;
   private sourceNode?: MediaStreamAudioSourceNode;
   private rafId?: number;
+  private deviceChangeListener?: () => void;
 
   constructor() {
     if (this.isBrowser) {
       // Feature detect setSinkId support
       const proto = (HTMLMediaElement.prototype as any);
       this.outputSelectionSupported.set(typeof proto.setSinkId === 'function');
+
+      // Check if running in secure context (HTTPS or localhost)
+      this.isSecureContext.set(window.isSecureContext ?? false);
+
+      // Set up device change monitoring
+      this.setupDeviceChangeMonitoring();
+    }
+  }
+
+  /**
+   * Monitor device connections/disconnections
+   */
+  private setupDeviceChangeMonitoring(): void {
+    if (!navigator?.mediaDevices) return;
+
+    this.deviceChangeListener = () => {
+      console.log('[MediaDevicesService] Device change detected, refreshing...');
+      this.refreshDevices();
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', this.deviceChangeListener);
+  }
+
+  /**
+   * Check permission status without requesting access
+   */
+  async checkPermissions(): Promise<PermissionStatus | null> {
+    if (!this.isBrowser) return null;
+
+    // Permissions API is not supported in all browsers
+    if (!navigator.permissions?.query) {
+      console.log('[MediaDevicesService] Permissions API not supported');
+      return null;
+    }
+
+    try {
+      const [micResult, cameraResult] = await Promise.all([
+        navigator.permissions.query({ name: 'microphone' as PermissionName }).catch(() => null),
+        navigator.permissions.query({ name: 'camera' as PermissionName }).catch(() => null),
+      ]);
+
+      const status: PermissionStatus = {
+        microphone: micResult?.state ?? 'prompt',
+        camera: cameraResult?.state ?? 'prompt',
+      };
+
+      this.permissionStatus.set(status);
+      console.log('[MediaDevicesService] Permission status:', status);
+
+      // Listen for permission changes
+      micResult?.addEventListener('change', () => {
+        this.permissionStatus.update(s => s ? { ...s, microphone: micResult.state } : null);
+      });
+      cameraResult?.addEventListener('change', () => {
+        this.permissionStatus.update(s => s ? { ...s, camera: cameraResult.state } : null);
+      });
+
+      return status;
+    } catch (e) {
+      console.error('[MediaDevicesService] Error checking permissions:', e);
+      return null;
     }
   }
 
   async refreshDevices(): Promise<void> {
     if (!this.isBrowser) {
       console.log('[MediaDevicesService] Not in browser context, skipping device enumeration');
+      return;
+    }
+
+    // Check secure context first
+    if (!this.isSecureContext()) {
+      this.error.set('⚠️ Media devices require HTTPS or localhost. Please use a secure connection.');
+      console.error('[MediaDevicesService] Not in secure context (HTTPS required)');
       return;
     }
 
@@ -59,23 +136,42 @@ export class MediaDevicesService {
         videoInputs: videoInputs.length
       });
 
+      // Check if we have devices but no labels (permissions not granted yet)
+      const hasDevicesWithoutLabels = all.length > 0 && all.every(d => !d.label);
+      if (hasDevicesWithoutLabels) {
+        console.warn('[MediaDevicesService] Devices found but no labels - permissions may not be granted');
+        this.error.set('ℹ️ Click "Request Permissions" to see device names');
+      }
+
       this._devices.set({ audioInputs, audioOutputs, videoInputs });
-      this.error.set(null); // Clear any previous errors
+
+      // Only clear error if we have devices with labels
+      if (!hasDevicesWithoutLabels) {
+        this.error.set(null);
+      }
     } catch (e: any) {
       console.error('[MediaDevicesService] Error enumerating devices:', e);
       this.error.set(e?.message ?? String(e));
     }
   }
 
-  async ensurePermissions(opts: { audio?: boolean; video?: boolean } = {}): Promise<void> {
+  async ensurePermissions(opts: { audio?: boolean; video?: boolean } = {}): Promise<boolean> {
     if (!this.isBrowser) {
       console.log('[MediaDevicesService] Not in browser context, skipping permission request');
-      return;
+      return false;
+    }
+
+    // Check secure context first
+    if (!this.isSecureContext()) {
+      this.error.set('⚠️ Media devices require HTTPS or localhost. Please use a secure connection.');
+      console.error('[MediaDevicesService] Not in secure context (HTTPS required)');
+      return false;
     }
 
     if (!navigator?.mediaDevices?.getUserMedia) {
+      this.error.set(LABELS[Label.BrowserNotSupported]);
       console.error('[MediaDevicesService] getUserMedia not available');
-      return;
+      return false;
     }
 
     const constraints: MediaStreamConstraints = {
@@ -85,15 +181,36 @@ export class MediaDevicesService {
 
     let stream: MediaStream | undefined;
     try {
-      if (!constraints.audio && !constraints.video) return;
+      if (!constraints.audio && !constraints.video) return false;
 
       console.log('[MediaDevicesService] Requesting permissions:', constraints);
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('[MediaDevicesService] Permissions granted');
       this.error.set(null); // Clear any previous errors
+
+      // Update permission status after successful grant
+      await this.checkPermissions();
+
+      return true;
     } catch (e: any) {
       console.error('[MediaDevicesService] Permission error:', e);
-      this.error.set(e?.message ?? String(e));
+
+      // Provide user-friendly error messages
+      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+        this.error.set('🚫 Permission denied. Please allow access to your camera/microphone in browser settings.');
+      } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+        this.error.set('📷 No camera or microphone found. Please connect a device.');
+      } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
+        this.error.set('⚠️ Device is already in use by another application.');
+      } else if (e.name === 'OverconstrainedError') {
+        this.error.set('⚠️ No device matches the requested constraints.');
+      } else if (e.name === 'SecurityError') {
+        this.error.set('🔒 Security error. Please use HTTPS or localhost.');
+      } else {
+        this.error.set(e?.message ?? String(e));
+      }
+
+      return false;
     } finally {
       stream?.getTracks().forEach(t => t.stop());
     }
@@ -223,6 +340,12 @@ export class MediaDevicesService {
   async cleanupAll(videoEl?: HTMLVideoElement): Promise<void> {
     this.stopMicTest();
     this.stopVideo(videoEl);
+
+    // Remove device change listener
+    if (this.deviceChangeListener && navigator?.mediaDevices) {
+      navigator.mediaDevices.removeEventListener('devicechange', this.deviceChangeListener);
+    }
   }
 }
+
 
