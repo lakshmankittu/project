@@ -1,0 +1,77 @@
+<ejs-dialog
+  [visible]="visible()"
+  [isModal]="true"
+  [showCloseIcon]="true"
+  [allowDragging]="true"
+  [width]="UI.DIALOG_WIDTH"
+  [header]="T[L.DialogTitle]"
+  (open)="onDialogOpen()"
+  (close)="onDialogClose()"
+>
+  <div class="error-message" *ngIf="error()" style="color: red; padding: 10px; margin-bottom: 10px; background: #fee; border-radius: 4px;">
+    {{ error() }}
+  </div>
+
+  <div class="debug-info" style="padding: 10px; margin-bottom: 10px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
+    <strong>Debug Info:</strong><br>
+    Audio Inputs: {{ audioInputs().length }} |
+    Audio Outputs: {{ audioOutputs().length }} |
+    Video Inputs: {{ videoInputs().length }}<br>
+    <button type="button" (click)="onDialogOpen()" style="margin-top: 8px; padding: 4px 12px;">🔄 Request Permissions & Refresh Devices</button>
+  </div>
+
+  <div class="section">
+    <div class="row">
+      <label for="micSelect">{{ T[L.Microphone] }}</label>
+      <select id="micSelect" [value]="selection().audioInputId ?? ''" (change)="onAudioInputChange($event)">
+        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
+        <option *ngFor="let d of audioInputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
+      </select>
+      <div class="actions">
+        <button type="button" (click)="startMic()">{{ T[L.Start] }}</button>
+        <button type="button" (click)="stopMic()" [disabled]="!isMicTesting()">{{ T[L.Stop] }}</button>
+      </div>
+    </div>
+    <div class="row meter">
+      <div class="bar"><div class="fill" [style.width.%]="micLevel() * 100"></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="row">
+      <label for="camSelect">{{ T[L.Camera] }}</label>
+      <select id="camSelect" [value]="selection().videoInputId ?? ''" (change)="onVideoInputChange($event)">
+        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
+        <option *ngFor="let d of videoInputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
+      </select>
+      <div class="actions">
+        <button type="button" (click)="startVideo()">{{ T[L.Start] }}</button>
+        <button type="button" (click)="stopVideo()" [disabled]="!isVideoOn()">{{ T[L.Stop] }}</button>
+      </div>
+    </div>
+    <div class="row preview">
+      <video #videoRef muted playsinline></video>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="row">
+      <label for="spkSelect">{{ T[L.Speaker] }}</label>
+      <select id="spkSelect" [value]="selection().audioOutputId ?? ''" (change)="onAudioOutputChange($event)">
+        <option [value]="''">{{ T[L.SelectPrompt] }}</option>
+        <option *ngFor="let d of audioOutputs()" [value]="d.deviceId">{{ d.label || T[L.UnlabeledDevice] }}</option>
+      </select>
+      <div class="actions">
+        <button type="button" (click)="testSpeaker()">{{ T[L.TestSpeaker] }}</button>
+      </div>
+    </div>
+    <p class="note" *ngIf="!outputSelectionSupported()">{{ T[L.OutputSwitchUnsupported] }}</p>
+    <audio #testAudioRef></audio>
+  </div>
+
+  <div class="footer">
+    <button type="button" class="primary" (click)="saveAndClose()">{{ T[L.Save] }}</button>
+    <button type="button" (click)="onDialogClose()">{{ T[L.Close] }}</button>
+  </div>
+</ejs-dialog>
+

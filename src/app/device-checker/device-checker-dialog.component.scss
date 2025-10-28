@@ -1,0 +1,17 @@
+.section { margin-block: 12px; }
+.row { display: grid; grid-template-columns: 140px 1fr auto; align-items: center; gap: 12px; margin-block: 8px; }
+.actions { display: inline-flex; gap: 8px; }
+
+.meter .bar { position: relative; height: 8px; background: #ececec; border-radius: 4px; overflow: hidden; }
+.meter .fill { position: absolute; inset-block: 0; left: 0; background: linear-gradient(90deg, #4caf50, #ff9800, #f44336); width: 0; }
+
+.preview video { width: 100%; max-height: 260px; background: #000; border-radius: 8px; }
+
+.footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.footer .primary { background: #3f51b5; color: white; border: 0; padding: 8px 14px; border-radius: 6px; }
+.footer button { padding: 8px 12px; border-radius: 6px; border: 1px solid #c9c9c9; background: #fff; }
+
+label { font-weight: 600; }
+select { padding: 6px 8px; border-radius: 6px; border: 1px solid #c9c9c9; }
+.note { color: #6a6a6a; font-size: 12px; margin-left: 140px; }
+
