@@ -42,6 +42,7 @@ export class DeviceCheckerDialogComponent {
   readonly isVideoOn = computed(() => this.media.isVideoOn());
   readonly outputSelectionSupported = computed(() => this.media.outputSelectionSupported());
   readonly error = computed(() => this.media.error());
+  readonly isSecureContext = computed(() => this.media.isSecureContext());
 
   @ViewChild('videoRef', { static: false }) videoRef?: ElementRef<HTMLVideoElement>;
   @ViewChild('testAudioRef', { static: false }) testAudioRef?: ElementRef<HTMLAudioElement>;

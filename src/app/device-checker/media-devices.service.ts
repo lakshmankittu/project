@@ -108,13 +108,6 @@ export class MediaDevicesService {
       return;
     }
 
-    // Check secure context first
-    if (!this.isSecureContext()) {
-      this.error.set('⚠️ Media devices require HTTPS or localhost. Please use a secure connection.');
-      console.error('[MediaDevicesService] Not in secure context (HTTPS required)');
-      return;
-    }
-
     if (!navigator?.mediaDevices?.enumerateDevices) {
       this.error.set(LABELS[Label.BrowserNotSupported]);
       console.error('[MediaDevicesService] navigator.mediaDevices.enumerateDevices not available');
@@ -123,6 +116,8 @@ export class MediaDevicesService {
 
     try {
       console.log('[MediaDevicesService] Enumerating devices...');
+      console.log('[MediaDevicesService] Secure context:', this.isSecureContext());
+
       const all = await navigator.mediaDevices.enumerateDevices();
       console.log('[MediaDevicesService] Found devices:', all.length, all);
 
@@ -138,17 +133,23 @@ export class MediaDevicesService {
 
       // Check if we have devices but no labels (permissions not granted yet)
       const hasDevicesWithoutLabels = all.length > 0 && all.every(d => !d.label);
-      if (hasDevicesWithoutLabels) {
+
+      if (!this.isSecureContext()) {
+        // Not HTTPS - warn user but still try to work
+        this.error.set('⚠️ Running on HTTP. For full functionality, use HTTPS or localhost. Some features may not work.');
+      } else if (hasDevicesWithoutLabels) {
+        // HTTPS but no permissions granted yet
         console.warn('[MediaDevicesService] Devices found but no labels - permissions may not be granted');
-        this.error.set('ℹ️ Click "Request Permissions" to see device names');
+        this.error.set('ℹ️ Click "Request Permissions & Refresh Devices" button to see device names');
+      } else if (all.length === 0) {
+        // No devices found
+        this.error.set('📷 No audio/video devices found. Please connect a microphone or camera.');
+      } else {
+        // All good - clear errors
+        this.error.set(null);
       }
 
       this._devices.set({ audioInputs, audioOutputs, videoInputs });
-
-      // Only clear error if we have devices with labels
-      if (!hasDevicesWithoutLabels) {
-        this.error.set(null);
-      }
     } catch (e: any) {
       console.error('[MediaDevicesService] Error enumerating devices:', e);
       this.error.set(e?.message ?? String(e));
@@ -161,17 +162,16 @@ export class MediaDevicesService {
       return false;
     }
 
-    // Check secure context first
-    if (!this.isSecureContext()) {
-      this.error.set('⚠️ Media devices require HTTPS or localhost. Please use a secure connection.');
-      console.error('[MediaDevicesService] Not in secure context (HTTPS required)');
-      return false;
-    }
-
     if (!navigator?.mediaDevices?.getUserMedia) {
       this.error.set(LABELS[Label.BrowserNotSupported]);
       console.error('[MediaDevicesService] getUserMedia not available');
       return false;
+    }
+
+    // Warn if not in secure context, but still try
+    if (!this.isSecureContext()) {
+      console.warn('[MediaDevicesService] Not in secure context - getUserMedia may fail');
+      this.error.set('⚠️ Not using HTTPS. Permission request may fail. Please use HTTPS or localhost.');
     }
 
     const constraints: MediaStreamConstraints = {
@@ -205,7 +205,9 @@ export class MediaDevicesService {
       } else if (e.name === 'OverconstrainedError') {
         this.error.set('⚠️ No device matches the requested constraints.');
       } else if (e.name === 'SecurityError') {
-        this.error.set('🔒 Security error. Please use HTTPS or localhost.');
+        this.error.set('🔒 Security error. Please use HTTPS or localhost for media device access.');
+      } else if (e.name === 'TypeError') {
+        this.error.set('🔒 Media devices require HTTPS or localhost. Please use a secure connection.');
       } else {
         this.error.set(e?.message ?? String(e));
       }
